@@ -127,6 +127,20 @@ export interface ChatMessage {
   text: string;
 }
 
+/**
+ * Choix fait avant son tour, joué automatiquement quand la parole arrive :
+ * - `checkfold` : checke si possible, sinon se couche ;
+ * - `check` : checke si possible, sinon le choix est annulé ;
+ * - `call` : suit le montant `amount` ; annulé si la mise a changé ;
+ * - `callany` : suit n'importe quelle mise (ou checke).
+ */
+export type PreActionType = 'checkfold' | 'check' | 'call' | 'callany';
+
+export interface PreAction {
+  type: PreActionType;
+  amount: number;
+}
+
 export type GameStatus = 'attente' | 'en-jeu' | 'pause';
 
 export interface ClientState {
@@ -138,6 +152,7 @@ export interface ClientState {
     seat: number | null;
     pendingRequest: SeatRequest | null;
     wantsStraddle: boolean;
+    preAction: PreAction | null;
   };
   config: GameConfig;
   status: GameStatus;
@@ -181,6 +196,7 @@ export interface ClientToServer {
   act: (p: { type: ActionType; amount?: number }, ack: Ack) => void;
   showCards: (p: object, ack: Ack) => void;
   setStraddle: (p: { on: boolean }, ack: Ack) => void;
+  setPreAction: (p: { type: PreActionType | null; amount?: number }, ack: Ack) => void;
   chat: (p: { text: string }, ack: Ack) => void;
   // Réservé au propriétaire
   approve: (p: { requestId: string }, ack: Ack) => void;

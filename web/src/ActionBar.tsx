@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ClientState } from '@tapis/engine';
+import type { ClientState, PreActionType } from '@tapis/engine';
 import { call } from './net';
 import { Icon } from './icons';
 
@@ -107,6 +107,47 @@ function TurnControls({ state, run }: { state: ClientState; run: (p: Promise<unk
   );
 }
 
+/** Pendant la main, en attendant son tour : choisir d'avance ce qu'on jouera. */
+function PreActions({ state, run }: { state: ClientState; run: (p: Promise<unknown>) => void }) {
+  const seat = state.seats[state.you.seat!]!;
+  const h = state.hand!;
+  const toCall = Math.min(Math.max(0, h.currentBet - seat.bet), seat.stack);
+  const chosen = state.you.preAction?.type ?? null;
+  const toggle = (type: PreActionType) => run(call('setPreAction', { type: chosen === type ? null : type }));
+  const options: [PreActionType, string][] = [
+    ['checkfold', 'Check / Fold'],
+    toCall === 0 ? ['check', 'Check'] : ['call', toCall >= seat.stack ? `Tapis ${fmt(toCall)}` : `Suivre ${fmt(toCall)}`],
+    ['callany', 'Suivre tout'],
+  ];
+
+  return (
+    <div className="actionbar pre">
+      <div className="pre-head">
+        <span className="myhand">{state.myHandName}</span>
+        <span className="hint">{chosen ? 'Sera joué automatiquement à votre tour' : 'Choisir d\'avance'}</span>
+        <span className="row">
+          <button className="btn ghost square" onClick={() => run(call('setAway', { away: true }))} aria-label="M'absenter">
+            <Icon name="away" />
+          </button>
+          <button className="btn ghost square" aria-label="Quitter la table"
+            onClick={() => { if (confirm('Quitter la table ? Vos jetons sont comptés dans le ledger.')) run(call('leaveSeat', {})); }}>
+            <Icon name="exit" />
+          </button>
+        </span>
+      </div>
+      <div className="buttons three">
+        {options.map(([type, label]) => (
+          <button key={type} className={'btn pre-btn' + (chosen === type ? ' on' : '')} aria-pressed={chosen === type}
+            onClick={() => toggle(type)}>
+            <span className="box" aria-hidden="true">{chosen === type && <Icon name="check" size={14} />}</span>
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SeatedControls({ state, run }: { state: ClientState; run: (p: Promise<unknown>) => void }) {
   const seat = state.seats[state.you.seat!]!;
   const h = state.hand;
@@ -126,6 +167,8 @@ function SeatedControls({ state, run }: { state: ClientState; run: (p: Promise<u
       </form>
     );
   }
+
+  if (inHandNow && !seat.folded && !seat.allIn && !seat.away) return <PreActions state={state} run={run} />;
 
   return (
     <div className="actionbar idle-bar">

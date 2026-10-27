@@ -3,7 +3,7 @@ import {
   PokerTable, evaluate, describePartial,
   type Card, type ActionType, type ClientState, type ChatMessage, type GameConfig,
   type GameStatus, type LedgerRow, type LogEntry, type PublicSeat, type SeatRequest,
-  type EngineEvent,
+  type EngineEvent, type PreAction, type PreActionType, type Street, type TableSnapshot,
 } from '@tapis/engine';
 
 interface Player {
@@ -17,11 +17,36 @@ const SUIT: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
 const pretty = (c: Card) => c[0] + SUIT[c[1]];
 const prettyAll = (cs: Card[]) => cs.map(pretty).join(' ');
 
+/** Ce qui est écrit sur disque pour reprendre une table après un redémarrage. */
+export interface GameSnapshot {
+  version: 1;
+  id: string;
+  ownerId: string;
+  config: GameConfig;
+  status: GameStatus;
+  players: [string, { name: string; token: string }][];
+  requests: SeatRequest[];
+  ledger: [string, { name: string; buyIn: number; buyOut: number }][];
+  log: LogEntry[];
+  chat: ChatMessage[];
+  leaving: string[];
+  pendingAway: [string, boolean][];
+  banks: [string, { seconds: number; hands: number }][];
+  straddlers: string[];
+  closedHand: number;
+  actionSeq: number;
+  levelIndex: number;
+  /** Temps restant du niveau de blindes en cours (ms), horloge arrêtée pendant l'arrêt du serveur. */
+  levelRemaining: number | null;
+  lastActivity: number;
+  table: TableSnapshot;
+}
+
 const MAX_LOG = 300;
 const MAX_CHAT = 100;
 
 export class Game {
-  readonly table: PokerTable;
+  table: PokerTable;
   status: GameStatus = 'attente';
   players = new Map<string, Player>();
   requests: SeatRequest[] = [];
@@ -49,6 +74,8 @@ export class Game {
   private levelIndex = 0;
   private levelEndsAt: number | null = null;
   private levelRemaining: number | null = null;
+  /** Pré-actions choisies avant son tour, valables pour la main et le tour d'enchères où elles ont été posées. */
+  private preActions = new Map<string, PreAction & { hand: number; street: Street }>();
 
   constructor(
     readonly id: string,
@@ -385,7 +412,58 @@ export class Game {
 
   act(playerId: string, type: ActionType, amount?: number): void {
     this.table.act(playerId, { type, amount });
+    this.preActions.delete(playerId);
     this.actionSeq++;
+    this.changed();
+  }
+
+  setPreAction(playerId: string, type: PreActionType | null): void {
+    if (type === null) {
+      this.preActions.delete(playerId);
+      return this.changed();
+    }
+    if (!['checkfold', 'check', 'call', 'callany'].includes(type)) throw new Error('Pré-action inconnue');
+    const h = this.table.hand;
+    const i = this.table.seatOf(playerId);
+    const s = i === -1 ? null : this.table.seats[i];
+    if (!h || h.ended || !s || !s.inHand || s.folded || s.allIn) throw new Error('Pas de main en cours pour vous');
+    if (h.toAct === i) throw new Error("C'est à vous de jouer");
+    // Le montant de « Suivre » est celui d'aujourd'hui : si quelqu'un relance, le choix tombe.
+    const amount = Math.min(Math.max(0, h.currentBet - s.bet), s.stack);
+    this.preActions.set(playerId, { type, amount, hand: h.number, street: h.street });
+    this.changed();
+  }
+
+  /** Une pré-action encore valable pour ce joueur, ou rien (main ou tour changé, mise relancée). */
+  private validPreAction(playerId: string): PreAction | null {
+    const pre = this.preActions.get(playerId);
+    const h = this.table.hand;
+    const i = this.table.seatOf(playerId);
+    const s = i === -1 ? null : this.table.seats[i];
+    if (!pre || !h || h.ended || !s || s.folded || s.allIn || pre.hand !== h.number || pre.street !== h.street) return null;
+    const toCall = Math.min(Math.max(0, h.currentBet - s.bet), s.stack);
+    if (pre.type === 'check' && toCall > 0) return null;
+    if (pre.type === 'call' && toCall !== pre.amount) return null;
+    return { type: pre.type, amount: pre.amount };
+  }
+
+  private prunePreActions() {
+    for (const id of this.preActions.keys()) if (!this.validPreAction(id)) this.preActions.delete(id);
+  }
+
+  /** La parole arrive à un joueur qui avait choisi d'avance : on joue pour lui. */
+  private runPreAction(key: string, seat: number) {
+    if (key !== this.turnKey) return;
+    const s = this.table.seats[seat];
+    if (!s) return;
+    const pre = this.validPreAction(s.playerId);
+    this.preActions.delete(s.playerId);
+    const legal = this.table.legalActions(seat);
+    if (pre && legal) {
+      const type: ActionType = legal.canCheck ? 'check' : pre.type === 'checkfold' ? 'fold' : 'call';
+      this.table.act(s.playerId, { type });
+      this.actionSeq++;
+    }
     this.changed();
   }
 
@@ -444,19 +522,23 @@ export class Game {
       this.table.seats[i] = null;
     }
     this.leaving.clear();
+    this.preActions.clear();
     if (this.status === 'en-jeu' && this.config.autoStart) {
       // Abattage, ou rabbit hunting à regarder : on laisse le temps prévu. Sinon, main suivante rapide.
       const showsCards = h.winners.some((w) => w.hand) || (this.config.rabbitHunting && h.board.length < 5);
-      const delay = showsCards ? this.config.showdownTime * 1000 : 2000;
-      this.clearNext();
-      this.nextHandAt = Date.now() + delay;
-      this.nextTimer = setTimeout(() => {
-        this.nextTimer = null;
-        this.nextHandAt = null;
-        this.dealIfPossible();
-        this.changed();
-      }, delay);
+      this.scheduleNextHand(showsCards ? this.config.showdownTime * 1000 : 2000);
     }
+  }
+
+  private scheduleNextHand(delay: number) {
+    this.clearNext();
+    this.nextHandAt = Date.now() + delay;
+    this.nextTimer = setTimeout(() => {
+      this.nextTimer = null;
+      this.nextHandAt = null;
+      this.dealIfPossible();
+      this.changed();
+    }, delay);
   }
 
   private scheduleTurn() {
@@ -478,6 +560,7 @@ export class Game {
       return;
     }
     if (this.config.decisionTime > 0) this.startCountdown(key, toAct, this.config.decisionTime * 1000);
+    if (this.validPreAction(s.playerId)) setTimeout(() => this.runPreAction(key, toAct), 350);
   }
 
   private startCountdown(key: string, seat: number, ms: number) {
@@ -529,6 +612,7 @@ export class Game {
     if (h?.ended && h.number !== this.closedHand) this.onHandEnd();
     this.dealIfPossible();
     this.consumeEvents();
+    this.prunePreActions();
     this.scheduleTurn();
     this.lastActivity = Date.now();
     this.onChange(this);
@@ -638,6 +722,7 @@ export class Game {
         seat: mySeat === -1 ? null : mySeat,
         pendingRequest: this.requests.find((r) => r.playerId === playerId) ?? null,
         wantsStraddle: this.config.allowStraddle && this.straddlers.has(playerId),
+        preAction: this.validPreAction(playerId),
       },
       config: this.config,
       status: this.status,
@@ -690,6 +775,61 @@ export class Game {
   dispose() {
     if (this.turnTimer) clearTimeout(this.turnTimer);
     this.clearNext();
+  }
+
+  // ---------- Sauvegarde ----------
+
+  snapshot(): GameSnapshot {
+    return {
+      version: 1,
+      id: this.id,
+      ownerId: this.ownerId,
+      config: this.config,
+      status: this.status,
+      players: [...this.players].map(([id, p]) => [id, { name: p.name, token: p.token }]),
+      requests: this.requests,
+      ledger: [...this.ledger],
+      log: this.log,
+      chat: this.chat,
+      leaving: [...this.leaving],
+      pendingAway: [...this.pendingAway],
+      banks: [...this.banks],
+      straddlers: [...this.straddlers],
+      closedHand: this.closedHand,
+      actionSeq: this.actionSeq,
+      levelIndex: this.levelIndex,
+      levelRemaining: this.levelEndsAt ? Math.max(0, this.levelEndsAt - Date.now()) : this.levelRemaining,
+      lastActivity: this.lastActivity,
+      table: this.table.snapshot(),
+    };
+  }
+
+  /** Recrée une table sauvegardée. Les joueurs se reconnectent d'eux-mêmes ; minuteurs et niveaux repartent. */
+  static restore(snap: GameSnapshot, onChange: (g: Game) => void): Game {
+    const g = new Game(snap.id, snap.ownerId, snap.config, onChange);
+    g.table = PokerTable.restore(snap.table, (n) => randomInt(n));
+    g.status = snap.status;
+    g.players = new Map(snap.players.map(([id, p]) => [id, { ...p, connections: 0 }]));
+    g.requests = snap.requests;
+    g.ledger = new Map(snap.ledger);
+    g.log = snap.log;
+    g.chat = snap.chat;
+    g.leaving = new Set(snap.leaving);
+    g.pendingAway = new Map(snap.pendingAway);
+    g.banks = new Map(snap.banks);
+    g.straddlers = new Set(snap.straddlers);
+    g.closedHand = snap.closedHand;
+    g.actionSeq = snap.actionSeq;
+    g.levelIndex = snap.levelIndex;
+    g.levelRemaining = snap.levelRemaining;
+    g.lastActivity = snap.lastActivity;
+    g.addLog('Serveur redémarré : la partie reprend');
+    if (g.status === 'en-jeu') g.resumeLevelClock();
+    const h = g.table.hand;
+    if (h?.ended && g.status === 'en-jeu' && g.config.autoStart) g.scheduleNextHand(3000);
+    g.changed(); // relance le minuteur du joueur qui a la parole
+    g.lastActivity = snap.lastActivity; // un redémarrage ne compte pas comme de l'activité
+    return g;
   }
 }
 

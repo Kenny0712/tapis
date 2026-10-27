@@ -9,7 +9,8 @@
 - **Texas Hold'em No Limit**, de 2 à 10 joueurs : blindes, ante, straddle UTG, pots annexes, partage du pot, tableau déroulé automatiquement quand tout le monde est à tapis.
 - **Table privée par lien** : le créateur est propriétaire, il valide les places et les recaves, règle la partie, peut mettre en pause, ajuster un tapis ou retirer un joueur.
 - **Réglages** : blindes fixes ou par niveaux qui montent, nombre de sièges, temps pour jouer et réserve de temps, durée de l'abattage, rabbit hunting, mains dévoilées à tapis, recaves, chat des spectateurs.
-- **Pendant la partie** : journal des mains, ledger (entrées, sorties, net), chat, absence, signal sonore quand c'est à vous.
+- **Pendant la partie** : pré-actions (Check / Fold, Check ou Suivre, Suivre tout) jouées automatiquement à votre tour, journal des mains, ledger (entrées, sorties, net), chat, absence, signal sonore quand c'est à vous.
+- **Reprise après redémarrage** : chaque table est sauvegardée sur disque ; si le serveur redémarre, même en pleine main, la partie reprend où elle était et les joueurs se reconnectent seuls.
 - **Mobile d'abord** : table debout et grands boutons sur téléphone, table ovale et raccourcis clavier sur ordinateur (F se coucher, C checker/suivre, R relancer). Installable sur l'écran d'accueil (PWA).
 
 ## Lancer en local
@@ -37,6 +38,7 @@ Deux scripts pour tester le serveur lancé :
 
 - `npx tsx server/scripts/simulation.ts` : trois bots jouent 20 mains.
 - `npx tsx server/scripts/bots.ts <code-table> 3` : trois bots demandent une place à votre table (le code est la fin de l'URL `/t/<code>`).
+- `npx tsx server/scripts/restart.ts` : lance son propre serveur, le coupe brutalement en pleine main, le relance et vérifie que la partie reprend sans perte de jetons (pré-actions comprises).
 
 ## Mettre en ligne
 
@@ -45,7 +47,9 @@ npm run build
 PORT=8080 npm start
 ```
 
-Un seul processus Node sert l'application et le jeu (WebSocket). Il faut un hébergeur qui garde un processus allumé : Render (un `render.yaml` est fourni), Railway, Fly.io ou un VPS. Netlify et Vercel ne conviennent pas. Les tables vivent en mémoire : un redémarrage les efface.
+Un seul processus Node sert l'application et le jeu (WebSocket). Il faut un hébergeur qui garde un processus allumé : Render (un `render.yaml` est fourni), Railway, Fly.io ou un VPS. Netlify et Vercel ne conviennent pas.
+
+Les tables sont sauvegardées dans `server/data/` (ou le dossier indiqué par `TAPIS_DATA_DIR`) et reprises au démarrage ; une table inactive depuis 12 h est supprimée. Le disque doit survivre aux redémarrages : c'est le cas sur un VPS ou avec un disque persistant, pas sur l'offre gratuite de Render, dont le disque est effacé à chaque mise en veille ou mise à jour.
 
 Pour jouer depuis son propre ordinateur sans hébergeur, `en-ligne.ps1` (Windows) ouvre un tunnel Cloudflare et affiche un lien https temporaire.
 

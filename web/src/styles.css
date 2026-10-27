@@ -302,6 +302,25 @@ input:focus { border-color: var(--accent); outline: none; }
 .amount { width: 110px !important; flex: none; text-align: right; }
 .raising .buttons { display: grid; grid-template-columns: 1fr 2fr; }
 .inline-field { display: flex; align-items: center; gap: 8px; }
+
+/* Pré-actions : cases à cocher en forme de boutons, pendant qu'on attend son tour */
+.actionbar.pre { gap: 6px; }
+.pre-head { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+.pre-head .myhand { color: var(--accent); font-weight: 600; font-size: 14px; }
+.pre-head .hint { flex: 1; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pre-head .btn.square { width: 36px; min-height: 36px; }
+.pre-btn { min-height: 48px; gap: 8px; background: transparent; border-style: dashed; color: var(--muted); }
+.pre-btn .box {
+  width: 18px; height: 18px; flex: none; border-radius: 5px; border: 1.5px solid currentColor;
+  display: grid; place-items: center;
+}
+.pre-btn.on { border-style: solid; border-color: var(--accent); color: var(--accent); background: rgba(217, 164, 65, 0.12); }
+.pre-btn.on .box { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+@media (max-width: 420px) { .pre-btn { font-size: 13px; padding: 0 6px; gap: 5px; } }
+@media (min-width: 900px) {
+  .actionbar.pre { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+  .actionbar.pre .buttons.three { grid-template-columns: repeat(3, 170px); }
+}
 .inline-field input { width: 130px; }
 
 @media (min-width: 900px) {

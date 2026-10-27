@@ -200,3 +200,25 @@ test('noms des mains en lettres anglaises', () => {
   assert.equal(ev('Qs Qd Jh Jc 3s').name, 'Double paire Q et J');
   assert.equal(ev('9s Ts Js Qs Ks').name, 'Quinte flush hauteur K');
 });
+
+test('sauvegarde et reprise en pleine main', () => {
+  let seed = 7;
+  const rng = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const t = new PokerTable({ maxSeats: 6, smallBlind: 10, bigBlind: 20, ante: 0 }, rng);
+  ['a', 'b', 'c'].forEach((id, i) => t.sit(i, id, id, 1000));
+  t.startHand();
+  t.act(t.seats[t.hand!.toAct!]!.playerId, { type: 'raise', amount: 60 });
+  // Passage par JSON, comme sur le disque.
+  const saved = JSON.parse(JSON.stringify(t.snapshot()));
+  const r = PokerTable.restore(saved, rng);
+  assert.equal(r.hand!.toAct, t.hand!.toAct);
+  assert.deepEqual(r.hand!.deck, t.hand!.deck);
+  assert.equal(r.potTotal(), 90);
+  while (!r.hand!.ended) {
+    const legal = r.legalActions(r.hand!.toAct!)!;
+    r.act(r.seats[r.hand!.toAct!]!.playerId, { type: legal.canCheck ? 'check' : 'call' });
+  }
+  assert.equal(r.seats.reduce((a, s) => a + (s?.stack ?? 0), 0), 3000);
+  // La table d'origine n'a pas bougé : la reprise travaille sur une copie.
+  assert.ok(!t.hand!.ended);
+});

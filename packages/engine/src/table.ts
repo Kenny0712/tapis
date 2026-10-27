@@ -78,6 +78,14 @@ export interface LegalActions {
   maxRaiseTo: number;
 }
 
+export interface TableSnapshot {
+  config: TableConfig;
+  seats: (Seat | null)[];
+  hand: Hand | null;
+  handCount: number;
+  dealer: number;
+}
+
 export type EngineEvent =
   | { type: 'handStart'; hand: number; dealer: number }
   | { type: 'blind'; seat: number; amount: number; kind: 'petite' | 'grosse' | 'ante' | 'straddle' }
@@ -125,6 +133,25 @@ export class PokerTable {
     }
     this.seats[index] = null;
     return true;
+  }
+
+  // ---------- Sauvegarde ----------
+
+  /** État complet de la table, sérialisable en JSON (main en cours et paquet compris). */
+  snapshot(): TableSnapshot {
+    return structuredClone({
+      config: this.config, seats: this.seats, hand: this.hand, handCount: this.handCount, dealer: this.dealer,
+    });
+  }
+
+  /** Recrée une table depuis une sauvegarde ; la main en cours reprend où elle en était. */
+  static restore(s: TableSnapshot, randomInt: (n: number) => number): PokerTable {
+    const t = new PokerTable({ ...s.config }, randomInt);
+    t.seats = structuredClone(s.seats);
+    t.hand = structuredClone(s.hand);
+    t.handCount = s.handCount;
+    t.dealer = s.dealer;
+    return t;
   }
 
   /** Change le nombre de sièges ; seuls des sièges vides peuvent disparaître. */

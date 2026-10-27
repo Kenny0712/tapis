@@ -7,6 +7,7 @@ import express from 'express';
 import { Server, type Socket } from 'socket.io';
 import { DEFAULT_CONFIG, type ClientToServer, type ServerToClient, type Ack } from '@tapis/engine';
 import { Game } from './game';
+import { dataDir, flushAll, loadSaved, removeSaved, scheduleSave } from './store';
 
 // `--port` (dev) passe avant PORT, que certains outils fixent pour l'interface et non pour ce serveur.
 const portArg = process.argv.indexOf('--port');
@@ -45,6 +46,31 @@ const sockets = new Map<string, Set<Sock>>();
 
 function broadcast(game: Game) {
   for (const s of sockets.get(game.id) ?? []) s.emit('state', game.stateFor(s.data.playerId!));
+}
+
+/** Après chaque changement d'une table : on prévient les joueurs et on la sauvegarde. */
+function onGameChange(game: Game) {
+  broadcast(game);
+  scheduleSave(game);
+}
+
+// Reprise des tables sauvegardées avant le dernier arrêt du serveur.
+const TABLE_TTL_MS = 12 * 3600_000;
+for (const snap of loadSaved(TABLE_TTL_MS)) {
+  try {
+    games.set(snap.id, Game.restore(snap, onGameChange));
+  } catch (e) {
+    console.error(`Table ${snap.id} non reprise :`, (e as Error).message);
+  }
+}
+if (games.size) console.log(`Tapis : ${games.size} table(s) reprise(s) depuis ${dataDir}`);
+
+// Arrêt propre (Ctrl+C, arrêt par l'hébergeur) : on écrit ce qui n'est pas encore sauvegardé.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    flushAll();
+    process.exit(0);
+  });
 }
 
 function newGameId() {
@@ -107,7 +133,7 @@ io.on('connection', (socket: Sock) => {
       const sb = Math.floor(Number(p.config?.smallBlind)), bb = Math.floor(Number(p.config?.bigBlind));
       if (sb > 0 && bb >= sb) Object.assign(c, { smallBlind: sb, bigBlind: bb });
       const id = newGameId();
-      const game = new Game(id, p.playerId, c, broadcast);
+      const game = new Game(id, p.playerId, c, onGameChange);
       games.set(id, game);
       attach(game, p.playerId, p.token);
       game.players.get(p.playerId)!.name = String(p.name ?? '').trim().slice(0, 18) || 'Hôte';
@@ -149,6 +175,7 @@ io.on('connection', (socket: Sock) => {
   on('updateConfig', (g, me, p) => g.updateConfig(me, p));
   on('nextLevel', (g, me) => g.nextLevel(me));
   on('setStraddle', (g, me, p) => g.setStraddle(me, !!p.on));
+  on('setPreAction', (g, me, p) => g.setPreAction(me, p.type ?? null));
 
   socket.on('disconnect', () => {
     const { gameId, playerId } = socket.data;
@@ -158,14 +185,15 @@ io.on('connection', (socket: Sock) => {
   });
 });
 
-// Une table sans personne depuis 12 h est supprimée.
+// Une table sans personne depuis 12 h est supprimée, avec sa sauvegarde.
 setInterval(() => {
-  const limit = Date.now() - 12 * 3600_000;
+  const limit = Date.now() - TABLE_TTL_MS;
   for (const [id, g] of games) {
     if (g.connectedCount() === 0 && g.lastActivity < limit) {
       g.dispose();
       games.delete(id);
       sockets.delete(id);
+      removeSaved(id);
     }
   }
 }, 10 * 60_000).unref();
