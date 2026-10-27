@@ -10,7 +10,11 @@ $env:PORT = '3001'
 $server = Start-Process -FilePath 'npm.cmd' -ArgumentList 'start' -NoNewWindow -PassThru
 try {
   Start-Sleep -Seconds 3
-  & 'C:\Program Files (x86)\cloudflared\cloudflared.exe' tunnel --no-autoupdate --url http://localhost:3001
+  # cloudflared : dans le PATH, sinon à l'emplacement d'installation de winget.
+  $cloudflared = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
+  if (-not $cloudflared) { $cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe' }
+  if (-not (Test-Path $cloudflared)) { throw 'cloudflared introuvable : winget install Cloudflare.cloudflared' }
+  & $cloudflared tunnel --no-autoupdate --url http://localhost:3001
 }
 finally {
   # npm lance node en sous-processus : on arrête tout l'arbre.

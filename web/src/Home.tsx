@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { call, identity, navigate, rememberName } from './net';
+import { SOURCE_URL } from './source';
 
 const BLINDS = [
   [1, 2], [5, 10], [10, 20], [25, 50], [50, 100], [100, 200],
@@ -74,7 +75,10 @@ export function Home() {
         </label>
       </form>
 
-      <footer className="home-foot">Jetons fictifs uniquement. Aucun argent réel n'est misé ni encaissé.</footer>
+      <footer className="home-foot">
+        Jetons fictifs uniquement. Aucun argent réel n'est misé ni encaissé.
+        {SOURCE_URL && <> · Logiciel libre (AGPL) · <a href={SOURCE_URL} target="_blank" rel="noreferrer">code source</a></>}
+      </footer>
     </main>
   );
 }

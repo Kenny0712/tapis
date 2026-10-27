@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { BlindLevel, ClientState, GameConfig } from '@tapis/engine';
 import { call } from './net';
 import { Icon } from './icons';
+import { SOURCE_URL } from './source';
 
 export type Tab = 'journal' | 'ledger' | 'chat' | 'table';
 const fmt = (n: number) => n.toLocaleString('fr-FR');
@@ -37,6 +38,9 @@ export function Drawer({ state, tab, setTab, onClose, onError }: {
         {tab === 'ledger' && <Ledger state={state} />}
         {tab === 'chat' && <Chat state={state} run={run} />}
         {tab === 'table' && state.you.isOwner && <OwnerPanel state={state} run={run} />}
+        {SOURCE_URL && tab !== 'chat' && (
+          <p className="free-software">Tapis est un logiciel libre (AGPL-3.0) · <a href={SOURCE_URL} target="_blank" rel="noreferrer">code source</a></p>
+        )}
       </div>
     </aside>
   );

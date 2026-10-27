@@ -119,6 +119,8 @@ input:focus { border-color: var(--accent); outline: none; }
 .panel h1 { margin: 0; font-size: 20px; }
 .panel.slim { padding: 16px 20px; }
 .home-foot { color: var(--muted); font-size: 12px; text-align: center; margin-top: auto; }
+.home-foot a, .free-software a { color: var(--accent); }
+.free-software { color: var(--muted); font-size: 12px; margin: 24px 0 0; text-align: center; }
 .loading { display: grid; place-items: center; height: 100%; color: var(--muted); }
 
 /* ---------- Écran de jeu ---------- */
