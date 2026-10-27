@@ -3,7 +3,6 @@ import type { Card, ClientState, PublicSeat } from '@tapis/engine';
 
 const SUIT_SYMBOL: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
 const SUIT_NAME: Record<string, string> = { s: 'pique', h: 'cœur', d: 'carreau', c: 'trèfle' };
-const RANK_LABEL: Record<string, string> = { T: '10', J: 'V', Q: 'D', K: 'R', A: 'A' };
 const RANK_NAME: Record<string, string> = { T: '10', J: 'valet', Q: 'dame', K: 'roi', A: 'as' };
 
 export function CardView({ card, size = 'md', highlight, dim }: {
@@ -14,7 +13,7 @@ export function CardView({ card, size = 'md', highlight, dim }: {
   return (
     <div className={`card ${size} suit-${s}${highlight ? ' hl' : ''}${dim ? ' dim' : ''}`}
       aria-label={`${RANK_NAME[r] ?? r} de ${SUIT_NAME[s]}`}>
-      <span className="index"><span className="rank">{RANK_LABEL[r] ?? r}</span><span className="suit">{SUIT_SYMBOL[s]}</span></span>
+      <span className="index"><span className="rank">{r}</span><span className="suit">{SUIT_SYMBOL[s]}</span></span>
       <span className="pip" aria-hidden="true">{SUIT_SYMBOL[s]}</span>
     </div>
   );

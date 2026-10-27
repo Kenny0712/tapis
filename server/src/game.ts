@@ -13,7 +13,8 @@ interface Player {
 }
 
 const SUIT: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
-const pretty = (c: Card) => (c[0] === 'T' ? '10' : c[0]) + SUIT[c[1]];
+// Notation anglaise : A K Q J T 9…
+const pretty = (c: Card) => c[0] + SUIT[c[1]];
 const prettyAll = (cs: Card[]) => cs.map(pretty).join(' ');
 
 const MAX_LOG = 300;
