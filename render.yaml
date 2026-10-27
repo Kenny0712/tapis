@@ -1,0 +1,14 @@
+# Configuration Render (« Blueprint ») : Render lit ce fichier et crée le service tout seul.
+services:
+  - type: web
+    name: tapis
+    runtime: node
+    plan: free
+    # Les outils de construction (Vite, TypeScript) sont des dépendances de dev : on les installe aussi.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

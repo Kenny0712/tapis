@@ -1,0 +1,24 @@
+{
+  "name": "@tapis/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts --port 3001",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@tapis/engine": "*",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
