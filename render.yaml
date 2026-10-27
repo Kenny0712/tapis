@@ -12,3 +12,6 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # Lien « code source » affiché aux joueurs (licence AGPL).
+      - key: VITE_SOURCE_URL
+        value: https://github.com/Kenny0712/tapis
