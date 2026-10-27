@@ -132,7 +132,14 @@ function SeatedControls({ state, run }: { state: ClientState; run: (p: Promise<u
       <p className="myhand">{inHandNow && !seat.folded ? state.myHandName : seat.stack === 0 ? 'Plus de jetons' : ''}</p>
       <div className="buttons">
         {canShow && <button className="btn" onClick={() => run(call('showCards', {}))}>Montrer</button>}
-        {!inHandNow && (
+        {state.config.allowStraddle && (
+          <button className={'btn' + (state.you.wantsStraddle ? ' primary' : '')} aria-pressed={state.you.wantsStraddle}
+            title="Miser 2 grosses blindes à l'aveugle quand vous êtes juste après la grosse blinde"
+            onClick={() => run(call('setStraddle', { on: !state.you.wantsStraddle }))}>
+            Straddle
+          </button>
+        )}
+        {!inHandNow && (state.config.allowRebuy || state.you.isOwner) && (
           <button className="btn" onClick={() => setRebuy(state.config.bigBlind * 100)}>Recave</button>
         )}
         <button className="btn icon-btn" onClick={() => run(call('setAway', { away: !seat.away }))}

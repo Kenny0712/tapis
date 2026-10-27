@@ -49,7 +49,7 @@ export function Game({ gameId }: { gameId: string }) {
   }, [gameId, notify]);
 
   // Horloge alignée sur le serveur, seulement quand un compte à rebours est affiché.
-  const ticking = !!(state?.turnDeadline || state?.nextHandAt);
+  const ticking = !!(state?.turnDeadline || state?.nextHandAt || state?.level?.endsAt);
   useEffect(() => {
     if (!ticking) return;
     const t = setInterval(() => setNow(Date.now() + offset.current), 250);
@@ -102,7 +102,10 @@ export function Game({ gameId }: { gameId: string }) {
         </button>
         <div className="title">
           <span className="brand sm">Tapis</span>
-          <span className="blinds">NLH · {state.config.smallBlind}/{state.config.bigBlind}{state.config.ante ? ` · ante ${state.config.ante}` : ''}</span>
+          <span className="blinds">
+            NLH · {state.config.smallBlind}/{state.config.bigBlind}{state.config.ante ? ` · ante ${state.config.ante}` : ''}
+            {state.level && <> · niv. {state.level.index + 1}/{state.level.total}{state.level.endsAt && <> · {clock(state.level.endsAt - now)}</>}</>}
+          </span>
         </div>
         <div className="top-actions">
           {state.spectators > 0 && <span className="spect" title="Spectateurs"><Icon name="user" size={16} />{state.spectators}</span>}
@@ -113,6 +116,11 @@ export function Game({ gameId }: { gameId: string }) {
             <Icon name={sound ? 'sound' : 'mute'} />
           </button>
           <button className="btn ghost square" onClick={share} aria-label="Partager le lien"><Icon name="share" /></button>
+          {state.you.isOwner && (
+            <button className="btn ghost settings-btn" onClick={() => setDrawer(drawer === 'table' ? null : 'table')} aria-label="Réglages de la table">
+              <Icon name="sliders" /><span>Réglages</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -143,6 +151,12 @@ export function Game({ gameId }: { gameId: string }) {
       {toast && <div className="toast" role="alert">{toast}</div>}
     </div>
   );
+}
+
+/** « 12:05 » : temps restant avant le prochain niveau. */
+function clock(ms: number) {
+  const t = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
 }
 
 let audio: AudioContext | null = null;

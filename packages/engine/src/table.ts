@@ -54,6 +54,7 @@ export interface Hand {
   dealer: number;
   smallBlindSeat: number;
   bigBlindSeat: number;
+  straddleSeat: number | null;
   street: Street;
   board: Card[];
   deck: Card[];
@@ -79,7 +80,7 @@ export interface LegalActions {
 
 export type EngineEvent =
   | { type: 'handStart'; hand: number; dealer: number }
-  | { type: 'blind'; seat: number; amount: number; kind: 'petite' | 'grosse' | 'ante' }
+  | { type: 'blind'; seat: number; amount: number; kind: 'petite' | 'grosse' | 'ante' | 'straddle' }
   | { type: 'action'; seat: number; action: ActionType; amount: number; allIn: boolean; opening?: boolean }
   | { type: 'street'; street: Street; board: Card[] }
   | { type: 'refund'; seat: number; amount: number }
@@ -126,6 +127,31 @@ export class PokerTable {
     return true;
   }
 
+  /** Change le nombre de sièges ; seuls des sièges vides peuvent disparaître. */
+  setMaxSeats(n: number): void {
+    if (n < 2 || n > 10) throw new Error('Entre 2 et 10 sièges');
+    if (this.seats.slice(n).some(Boolean)) throw new Error(`Libérez d'abord les sièges au-delà du n°${n}`);
+    if (n < this.seats.length) this.seats.length = n;
+    while (this.seats.length < n) this.seats.push(null);
+    this.config.maxSeats = n;
+  }
+
+  /** Cartes qui seraient sorties si la main était allée jusqu'à la river (« rabbit hunting »). */
+  rabbitCards(): Card[] {
+    const h = this.hand;
+    if (!h || !h.ended || h.board.length >= 5) return [];
+    const deck = h.deck.slice();
+    const out: Card[] = [];
+    let shown = h.board.length;
+    while (shown < 5) {
+      deck.pop(); // brûlée
+      const n = shown === 0 ? 3 : 1;
+      for (let k = 0; k < n; k++) out.push(deck.pop()!);
+      shown += n;
+    }
+    return out;
+  }
+
   seatOf(playerId: string): number {
     return this.seats.findIndex((s) => s?.playerId === playerId);
   }
@@ -147,7 +173,8 @@ export class PokerTable {
 
   // ---------- Déroulement d'une main ----------
 
-  startHand(): void {
+  /** `straddle(playerId)` : ce joueur, s'il est juste après la grosse blinde, poste un straddle de 2 grosses blindes. */
+  startHand(options: { straddle?: (playerId: string) => boolean } = {}): void {
     if (this.inProgress) throw new Error('Une main est déjà en cours');
     const ready = this.readySeats();
     if (ready.length < 2) throw new Error('Il faut au moins deux joueurs');
@@ -173,6 +200,7 @@ export class PokerTable {
       dealer: this.dealer,
       smallBlindSeat: sb,
       bigBlindSeat: bb,
+      straddleSeat: null,
       street: 'preflop',
       board: [],
       deck: shuffle(newDeck(), this.randomInt),
@@ -199,6 +227,20 @@ export class PokerTable {
     this.postBlind(sb, smallBlind, 'petite');
     this.postBlind(bb, bigBlind, 'grosse');
 
+    // Straddle UTG : une « troisième blinde » à 2 GB, possible à partir de 3 joueurs. Il parle en dernier préflop.
+    let lastBlind = bb;
+    if (ready.length >= 3 && options.straddle) {
+      const utg = this.nextSeat(bb, (s) => s.inHand);
+      const u = this.seats[utg]!;
+      if (!u.allIn && options.straddle(u.playerId)) {
+        this.postBlind(utg, bigBlind * 2, 'straddle');
+        this.hand.straddleSeat = utg;
+        this.hand.currentBet = Math.max(bigBlind, u.bet);
+        this.hand.minRaise = bigBlind * 2;
+        lastBlind = utg;
+      }
+    }
+
     // Deux cartes chacun, en commençant à gauche du bouton.
     for (let round = 0; round < 2; round++) {
       let i = this.dealer;
@@ -208,11 +250,11 @@ export class PokerTable {
       }
     }
 
-    this.hand.toAct = this.nextToAct(bb);
+    this.hand.toAct = this.nextToAct(lastBlind);
     if (this.hand.toAct === null || this.bettingComplete()) this.endStreet();
   }
 
-  private postBlind(i: number, amount: number, kind: 'petite' | 'grosse') {
+  private postBlind(i: number, amount: number, kind: 'petite' | 'grosse' | 'straddle') {
     const s = this.seats[i]!;
     const a = Math.min(amount, s.stack);
     s.stack -= a;

@@ -156,3 +156,39 @@ test('le bouton tourne et un joueur qui part se couche', () => {
   t.startHand();
   assert.notEqual(t.hand!.dealer, d1);
 });
+
+test('straddle UTG : 2 GB, parle en dernier préflop', () => {
+  const t = new PokerTable({ maxSeats: 6, smallBlind: 10, bigBlind: 20, ante: 0 }, () => 0);
+  ['a', 'b', 'c', 'd'].forEach((id, i) => t.sit(i, id, id, 1000));
+  t.startHand({ straddle: (id) => id === 'd' });
+  // bouton 0, PB 1, GB 2, straddle 3 : le bouton parle en premier.
+  assert.equal(t.hand!.straddleSeat, 3);
+  assert.equal(t.hand!.currentBet, 40);
+  assert.equal(t.hand!.toAct, 0);
+  assert.equal(t.legalActions(0)!.minRaiseTo, 80);
+  t.act('a', { type: 'call' });
+  t.act('b', { type: 'call' });
+  t.act('c', { type: 'call' });
+  assert.equal(t.hand!.toAct, 3); // l'option revient au straddle
+  assert.ok(t.legalActions(3)!.canCheck);
+  t.act('d', { type: 'check' });
+  assert.equal(t.hand!.street, 'flop');
+});
+
+test('rabbit hunting et nombre de sièges', () => {
+  const t = new PokerTable({ maxSeats: 9, smallBlind: 10, bigBlind: 20, ante: 0 }, () => 0);
+  t.sit(0, 'a', 'A', 1000);
+  t.sit(1, 'b', 'B', 1000);
+  assert.throws(() => t.setMaxSeats(1));
+  t.setMaxSeats(4);
+  assert.equal(t.seats.length, 4);
+  t.sit(3, 'c', 'C', 1000);
+  assert.throws(() => t.setMaxSeats(3), /Libérez/);
+  t.startHand();
+  t.act(t.seats[t.hand!.toAct!]!.playerId, { type: 'fold' });
+  t.act(t.seats[t.hand!.toAct!]!.playerId, { type: 'fold' });
+  assert.ok(t.hand!.ended);
+  const rabbit = t.rabbitCards();
+  assert.equal(rabbit.length, 5);
+  assert.equal(new Set(rabbit).size, 5);
+});

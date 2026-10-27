@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { ClientState, GameConfig } from '@tapis/engine';
+import type { BlindLevel, ClientState, GameConfig } from '@tapis/engine';
 import { call } from './net';
 import { Icon } from './icons';
 
@@ -12,7 +12,7 @@ export function Drawer({ state, tab, setTab, onClose, onError }: {
 }) {
   const run = (p: Promise<unknown>) => p.catch((e: Error) => onError(e.message));
   const tabs: [Tab, string][] = [['journal', 'Journal'], ['ledger', 'Ledger'], ['chat', 'Chat']];
-  if (state.you.isOwner) tabs.push(['table', `Table${state.requests.length ? ` (${state.requests.length})` : ''}`]);
+  if (state.you.isOwner) tabs.push(['table', `Réglages${state.requests.length ? ` (${state.requests.length})` : ''}`]);
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -103,11 +103,33 @@ function Chat({ state, run }: { state: ClientState; run: (p: Promise<unknown>) =
 
 function OwnerPanel({ state, run }: { state: ClientState; run: (p: Promise<unknown>) => void }) {
   const [cfg, setCfg] = useState<GameConfig>(state.config);
-  useEffect(() => { setCfg(state.config); }, [state.config]);
-  const num = (k: keyof GameConfig) => ({
+  // On ne recopie la config du serveur que lorsqu'elle change vraiment, pour ne pas effacer une saisie en cours.
+  const serverJson = JSON.stringify(state.config);
+  const lastServer = useRef(serverJson);
+  useEffect(() => {
+    if (serverJson !== lastServer.current) {
+      lastServer.current = serverJson;
+      setCfg(state.config);
+    }
+  }, [serverJson, state.config]);
+  const dirty = JSON.stringify(cfg) !== serverJson;
+  const set = <K extends keyof GameConfig>(k: K, v: GameConfig[K]) => setCfg({ ...cfg, [k]: v });
+  const num = (k: keyof GameConfig, min = 0, max?: number) => ({
+    type: 'number', inputMode: 'numeric' as const, min, max,
     value: cfg[k] as number,
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setCfg({ ...cfg, [k]: Number(e.target.value) }),
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) as never),
   });
+  const rising = cfg.blindLevels.length > 0;
+  const occupiedMax = state.seats.reduce((m, s, i) => (s ? i + 1 : m), 2);
+
+  const setLevel = (i: number, k: keyof BlindLevel, v: number) =>
+    set('blindLevels', cfg.blindLevels.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  const addLevel = () => {
+    const last = cfg.blindLevels[cfg.blindLevels.length - 1];
+    set('blindLevels', [...cfg.blindLevels, {
+      smallBlind: last.smallBlind * 2, bigBlind: last.bigBlind * 2, ante: last.ante * 2, minutes: last.minutes,
+    }]);
+  };
 
   return (
     <div className="owner">
@@ -133,21 +155,116 @@ function OwnerPanel({ state, run }: { state: ClientState; run: (p: Promise<unkno
         {state.status === 'en-jeu' && !state.config.autoStart && (!state.hand || state.hand.ended) && (
           <button className="btn primary" onClick={() => run(call('start', {}))}>Distribuer la main suivante</button>
         )}
+        {state.level && state.level.next && (
+          <button className="btn" onClick={() => run(call('nextLevel', {}))}>
+            Passer au niveau {state.level.index + 2} ({state.level.next.smallBlind}/{state.level.next.bigBlind})
+          </button>
+        )}
       </section>
 
-      <form onSubmit={(e) => { e.preventDefault(); run(call('updateConfig', cfg)); }}>
-        <h3>Réglages</h3>
-        <p className="hint">Les blindes changent à la main suivante.</p>
-        <div className="grid2">
-          <label className="field"><span>Petite blinde</span><input type="number" min={1} {...num('smallBlind')} /></label>
-          <label className="field"><span>Grosse blinde</span><input type="number" min={1} {...num('bigBlind')} /></label>
-          <label className="field"><span>Ante</span><input type="number" min={0} {...num('ante')} /></label>
-          <label className="field"><span>Temps pour jouer (s, 0 = illimité)</span><input type="number" min={0} max={600} {...num('decisionTime')} /></label>
-          <label className="field"><span>Durée de l'abattage (s)</span><input type="number" min={1} max={30} {...num('showdownTime')} /></label>
+      <form className="settings" onSubmit={(e) => { e.preventDefault(); run(call('updateConfig', cfg)); }}>
+        <h3>Blindes</h3>
+        <div className="seg wide" role="group" aria-label="Type de blindes">
+          <button type="button" className={!rising ? 'on' : ''} aria-pressed={!rising}
+            onClick={() => set('blindLevels', [])}>Fixes</button>
+          <button type="button" className={rising ? 'on' : ''} aria-pressed={rising}
+            onClick={() => !rising && set('blindLevels', defaultLevels(cfg.smallBlind, cfg.bigBlind, cfg.ante))}>Qui montent</button>
         </div>
-        <label className="check"><input type="checkbox" checked={cfg.autoStart} onChange={(e) => setCfg({ ...cfg, autoStart: e.target.checked })} /> Enchaîner les mains automatiquement</label>
-        <label className="check"><input type="checkbox" checked={cfg.allowGuestChat} onChange={(e) => setCfg({ ...cfg, allowGuestChat: e.target.checked })} /> Les spectateurs peuvent écrire dans le chat</label>
-        <button className="btn primary">Enregistrer</button>
+        {!rising ? (
+          <div className="grid3">
+            <label className="field"><span>Petite blinde</span><input {...num('smallBlind', 1)} /></label>
+            <label className="field"><span>Grosse blinde</span><input {...num('bigBlind', 1)} /></label>
+            <label className="field"><span>Ante</span><input {...num('ante', 0)} /></label>
+          </div>
+        ) : (
+          <>
+            <p className="hint">Chaque niveau dure le temps indiqué pendant la partie (la pause arrête l'horloge). Le dernier niveau reste jusqu'à la fin.</p>
+            <table className="levels">
+              <thead><tr><th>Niv.</th><th>PB</th><th>GB</th><th>Ante</th><th>Min</th><th /></tr></thead>
+              <tbody>
+                {cfg.blindLevels.map((l, i) => (
+                  <tr key={i} className={state.level?.index === i ? 'current' : ''}>
+                    <td>{i + 1}</td>
+                    {(['smallBlind', 'bigBlind', 'ante', 'minutes'] as const).map((k) => (
+                      <td key={k}>
+                        <input type="number" inputMode="numeric" min={k === 'ante' ? 0 : 1} value={l[k]}
+                          aria-label={`Niveau ${i + 1}, ${k === 'smallBlind' ? 'petite blinde' : k === 'bigBlind' ? 'grosse blinde' : k === 'ante' ? 'ante' : 'minutes'}`}
+                          onChange={(e) => setLevel(i, k, Number(e.target.value))} />
+                      </td>
+                    ))}
+                    <td>
+                      <button type="button" className="btn ghost square" aria-label={`Supprimer le niveau ${i + 1}`}
+                        onClick={() => set('blindLevels', cfg.blindLevels.filter((_, j) => j !== i))}>
+                        <Icon name="close" size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button type="button" className="btn" onClick={addLevel}>Ajouter un niveau</button>
+          </>
+        )}
+
+        <h3>Table</h3>
+        <Setting label="Nombre de sièges" hint={occupiedMax > 2 ? `Au moins ${occupiedMax} tant que le siège ${occupiedMax} est occupé` : undefined}>
+          <select value={cfg.maxSeats} onChange={(e) => set('maxSeats', Number(e.target.value))}>
+            {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
+              <option key={n} value={n} disabled={n < occupiedMax}>{n}</option>
+            ))}
+          </select>
+        </Setting>
+        <Setting label="Recaves autorisées" hint="Les joueurs peuvent racheter des jetons entre deux mains, avec votre accord.">
+          <YesNo value={cfg.allowRebuy} onChange={(v) => set('allowRebuy', v)} />
+        </Setting>
+
+        <h3>Temps</h3>
+        <Setting label="Temps pour jouer" hint="En secondes. 0 = illimité.">
+          <input className="amount" {...num('decisionTime', 0, 600)} />
+        </Setting>
+        <Setting label="Réserve de temps" hint="Secondes en plus quand le temps est écoulé. 0 = aucune.">
+          <input className="amount" {...num('timeBank', 0, 600)} />
+        </Setting>
+        {cfg.timeBank > 0 && (
+          <Setting label="Réserve remplie toutes les" hint="Nombre de mains jouées.">
+            <input className="amount" {...num('timeBankHands', 1, 500)} />
+          </Setting>
+        )}
+        <Setting label="Affichage de l'abattage" hint="Secondes avant la main suivante.">
+          <div className="seg" role="group">
+            {[[3, 'Rapide'], [6, 'Normal'], [9, 'Lent']].map(([v, l]) => (
+              <button type="button" key={v} className={cfg.showdownTime === v ? 'on' : ''} aria-pressed={cfg.showdownTime === v}
+                onClick={() => set('showdownTime', v as number)}>{l}</button>
+            ))}
+          </div>
+        </Setting>
+        <Setting label="Enchaîner les mains" hint="Sinon, vous distribuez chaque main à la main.">
+          <YesNo value={cfg.autoStart} onChange={(v) => set('autoStart', v)} />
+        </Setting>
+
+        <h3>Règles</h3>
+        <Setting label="Straddle UTG (2 GB)" hint="Le joueur après la grosse blinde peut miser 2 GB à l'aveugle et parle en dernier.">
+          <YesNo value={cfg.allowStraddle} onChange={(v) => set('allowStraddle', v)} />
+        </Setting>
+        <Setting label="Rabbit hunting" hint="Montrer les cartes qui seraient sorties quand la main s'arrête avant la river.">
+          <YesNo value={cfg.rabbitHunting} onChange={(v) => set('rabbitHunting', v)} />
+        </Setting>
+        <Setting label="Dévoiler les mains à tapis" hint="Quand plus personne ne peut miser, les cartes sont retournées.">
+          <YesNo value={cfg.revealOnAllIn} onChange={(v) => set('revealOnAllIn', v)} />
+        </Setting>
+
+        <h3>Social</h3>
+        <Setting label="Chat des spectateurs" hint="Les personnes non assises peuvent écrire.">
+          <YesNo value={cfg.allowGuestChat} onChange={(v) => set('allowGuestChat', v)} />
+        </Setting>
+
+        <div className="save-bar">
+          <span className="hint">{dirty ? 'Modifications non enregistrées · blindes appliquées à la main suivante' : 'Réglages à jour'}</span>
+          <span className="row">
+            {dirty && <button type="button" className="btn" onClick={() => setCfg(state.config)}>Annuler</button>}
+            <button className="btn primary" disabled={!dirty}>Enregistrer</button>
+          </span>
+        </div>
       </form>
 
       <section>
@@ -158,6 +275,37 @@ function OwnerPanel({ state, run }: { state: ClientState; run: (p: Promise<unkno
             onKick={() => { if (confirm(`Retirer ${s.name} de la table ?`)) run(call('kick', { playerId: s.playerId })); }} />
         ))}
       </section>
+    </div>
+  );
+}
+
+/** Structure de départ quand on passe aux blindes qui montent : 8 niveaux de 15 minutes. */
+function defaultLevels(sb: number, bb: number, ante: number): BlindLevel[] {
+  return [1, 1.5, 2, 3, 4, 6, 8, 10].map((m) => ({
+    smallBlind: Math.max(1, Math.round(sb * m)),
+    bigBlind: Math.max(1, Math.round(bb * m)),
+    ante: Math.round(ante * m),
+    minutes: 15,
+  }));
+}
+
+function Setting({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="setting">
+      <div>
+        <div className="setting-label">{label}</div>
+        {hint && <div className="hint">{hint}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function YesNo({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="seg" role="group">
+      <button type="button" className={value ? 'on' : ''} aria-pressed={value} onClick={() => onChange(true)}>Oui</button>
+      <button type="button" className={!value ? 'on' : ''} aria-pressed={!value} onClick={() => onChange(false)}>Non</button>
     </div>
   );
 }

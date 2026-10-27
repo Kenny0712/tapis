@@ -38,6 +38,16 @@ export class Game {
   private actionSeq = 0;
   private nextTimer: NodeJS.Timeout | null = null;
   private closedHand = 0;
+  private turnDuration = 0;
+  /** Réserve de temps de chaque joueur (secondes) et mains jouées depuis son dernier remplissage. */
+  private banks = new Map<string, { seconds: number; hands: number }>();
+  /** Joueur en train de puiser dans sa réserve, et depuis quand. */
+  private bankUse: { playerId: string; since: number } | null = null;
+  private straddlers = new Set<string>();
+  // Niveaux de blindes : l'horloge ne tourne que pendant la partie.
+  private levelIndex = 0;
+  private levelEndsAt: number | null = null;
+  private levelRemaining: number | null = null;
 
   constructor(
     readonly id: string,
@@ -137,6 +147,7 @@ export class Game {
     if (this.table.seats[req.seat]) throw new Error('Ce siège vient d’être pris');
     if (this.table.seatOf(req.playerId) !== -1) throw new Error('Déjà assis');
     this.table.sit(req.seat, req.playerId, req.name, req.stack);
+    if (!this.banks.has(req.playerId)) this.banks.set(req.playerId, { seconds: this.config.timeBank, hands: 0 });
     this.table.seats[req.seat]!.sittingOut = away;
     const l = this.ledger.get(req.playerId) ?? { name: req.name, buyIn: 0, buyOut: 0 };
     l.name = req.name;
@@ -193,6 +204,7 @@ export class Game {
 
   rebuy(playerId: string, amount: number): void {
     amount = cleanAmount(amount);
+    if (!this.config.allowRebuy && !this.isOwner(playerId)) throw new Error('Les recaves sont désactivées à cette table');
     const i = this.table.seatOf(playerId);
     if (i === -1) throw new Error("Vous n'êtes pas assis");
     const req: SeatRequest = { id: randomUUID(), playerId, name: this.seatName(i), seat: i, stack: amount, kind: 'recave' };
@@ -232,8 +244,11 @@ export class Game {
 
   start(ownerId: string): void {
     this.requireOwner(ownerId);
-    if (this.status !== 'en-jeu') this.addLog('La partie commence');
-    this.status = 'en-jeu';
+    if (this.status !== 'en-jeu') {
+      this.addLog(this.status === 'pause' ? 'La partie reprend' : 'La partie commence');
+      this.status = 'en-jeu';
+      this.resumeLevelClock();
+    }
     this.dealIfPossible();
     this.changed();
   }
@@ -241,6 +256,7 @@ export class Game {
   pause(ownerId: string): void {
     this.requireOwner(ownerId);
     this.status = 'pause';
+    this.pauseLevelClock();
     this.clearNext();
     this.addLog('Partie en pause après cette main');
     this.changed();
@@ -249,20 +265,121 @@ export class Game {
   updateConfig(ownerId: string, patch: Partial<GameConfig>): void {
     this.requireOwner(ownerId);
     const c = { ...this.config };
-    const int = (v: unknown, min: number, max: number) => Math.min(max, Math.max(min, Math.floor(Number(v))));
+    const int = (v: unknown, min: number, max: number) => {
+      const n = Math.floor(Number(v));
+      if (!Number.isFinite(n)) throw new Error('Valeur invalide');
+      return Math.min(max, Math.max(min, n));
+    };
     if (patch.smallBlind !== undefined) c.smallBlind = int(patch.smallBlind, 1, 1e9);
     if (patch.bigBlind !== undefined) c.bigBlind = int(patch.bigBlind, 1, 1e9);
     if (patch.ante !== undefined) c.ante = int(patch.ante, 0, 1e9);
+    if (patch.maxSeats !== undefined) c.maxSeats = int(patch.maxSeats, 2, 10);
     if (patch.decisionTime !== undefined) c.decisionTime = int(patch.decisionTime, 0, 600);
+    if (patch.timeBank !== undefined) c.timeBank = int(patch.timeBank, 0, 600);
+    if (patch.timeBankHands !== undefined) c.timeBankHands = int(patch.timeBankHands, 1, 500);
     if (patch.showdownTime !== undefined) c.showdownTime = int(patch.showdownTime, 1, 30);
-    if (patch.autoStart !== undefined) c.autoStart = !!patch.autoStart;
-    if (patch.allowGuestChat !== undefined) c.allowGuestChat = !!patch.allowGuestChat;
+    for (const k of ['autoStart', 'allowStraddle', 'rabbitHunting', 'revealOnAllIn', 'allowRebuy', 'allowGuestChat'] as const) {
+      if (patch[k] !== undefined) c[k] = !!patch[k];
+    }
+    if (patch.blindLevels !== undefined) {
+      if (!Array.isArray(patch.blindLevels) || patch.blindLevels.length > 30) throw new Error('30 niveaux au maximum');
+      c.blindLevels = patch.blindLevels.map((l, i) => {
+        const lv = {
+          smallBlind: int(l.smallBlind, 1, 1e9), bigBlind: int(l.bigBlind, 1, 1e9),
+          ante: int(l.ante ?? 0, 0, 1e9), minutes: int(l.minutes, 1, 600),
+        };
+        if (lv.bigBlind < lv.smallBlind) throw new Error(`Niveau ${i + 1} : la grosse blinde doit être ≥ la petite`);
+        return lv;
+      });
+    }
     if (c.bigBlind < c.smallBlind) throw new Error('La grosse blinde doit être ≥ la petite');
+
+    // Tout est validé : on applique. Le nombre de sièges peut encore échouer (sièges occupés).
+    if (c.maxSeats !== this.table.seats.length) {
+      this.table.setMaxSeats(c.maxSeats);
+      this.requests = this.requests.filter((r) => r.seat < c.maxSeats);
+    }
+    const levelsChanged = JSON.stringify(c.blindLevels) !== JSON.stringify(this.config.blindLevels);
+    const bankChanged = c.timeBank !== this.config.timeBank;
     this.config = c;
+    if (!c.allowStraddle) this.straddlers.clear();
+    if (bankChanged) for (const b of this.banks.values()) b.seconds = c.timeBank;
+    if (levelsChanged) {
+      this.levelIndex = 0;
+      this.levelRemaining = null;
+      this.levelEndsAt = null;
+      if (c.blindLevels.length) {
+        this.applyLevel(0);
+        if (this.status === 'en-jeu') this.resumeLevelClock();
+      }
+    }
     // Les blindes changent à partir de la main suivante.
-    Object.assign(this.table.config, { smallBlind: c.smallBlind, bigBlind: c.bigBlind, ante: c.ante });
-    this.addLog(`Réglages : blindes ${c.smallBlind}/${c.bigBlind}${c.ante ? `, ante ${c.ante}` : ''}`);
+    const b = this.config;
+    Object.assign(this.table.config, { smallBlind: b.smallBlind, bigBlind: b.bigBlind, ante: b.ante });
+    this.addLog(b.blindLevels.length
+      ? `Réglages enregistrés · ${b.blindLevels.length} niveaux de blindes, niveau ${this.levelIndex + 1} : ${b.smallBlind}/${b.bigBlind}`
+      : `Réglages enregistrés · blindes ${b.smallBlind}/${b.bigBlind}${b.ante ? `, ante ${b.ante}` : ''}`);
     this.changed();
+  }
+
+  nextLevel(ownerId: string): void {
+    this.requireOwner(ownerId);
+    const lv = this.config.blindLevels;
+    if (this.levelIndex >= lv.length - 1) throw new Error('Pas de niveau suivant');
+    this.applyLevel(this.levelIndex + 1);
+    this.levelRemaining = null;
+    this.levelEndsAt = null;
+    if (this.status === 'en-jeu') this.resumeLevelClock();
+    this.logLevel();
+    this.changed();
+  }
+
+  setStraddle(playerId: string, on: boolean): void {
+    if (!this.config.allowStraddle) throw new Error("Le straddle n'est pas autorisé à cette table");
+    if (this.table.seatOf(playerId) === -1) throw new Error("Vous n'êtes pas assis");
+    if (on) this.straddlers.add(playerId);
+    else this.straddlers.delete(playerId);
+    this.changed();
+  }
+
+  // ---------- Niveaux de blindes ----------
+
+  private applyLevel(i: number) {
+    const lv = this.config.blindLevels[i];
+    this.levelIndex = i;
+    this.config = { ...this.config, smallBlind: lv.smallBlind, bigBlind: lv.bigBlind, ante: lv.ante };
+    Object.assign(this.table.config, { smallBlind: lv.smallBlind, bigBlind: lv.bigBlind, ante: lv.ante });
+  }
+
+  private logLevel() {
+    const c = this.config;
+    this.addLog(`Niveau ${this.levelIndex + 1} : blindes ${c.smallBlind}/${c.bigBlind}${c.ante ? `, ante ${c.ante}` : ''}`);
+  }
+
+  private resumeLevelClock() {
+    const lv = this.config.blindLevels;
+    if (!lv.length || this.levelIndex >= lv.length - 1) {
+      this.levelEndsAt = null;
+      return;
+    }
+    this.levelEndsAt = Date.now() + (this.levelRemaining ?? lv[this.levelIndex].minutes * 60_000);
+    this.levelRemaining = null;
+  }
+
+  private pauseLevelClock() {
+    if (this.levelEndsAt) this.levelRemaining = Math.max(0, this.levelEndsAt - Date.now());
+    this.levelEndsAt = null;
+  }
+
+  /** Avant chaque main : passe au niveau suivant si son heure est venue. */
+  private advanceLevels() {
+    const lv = this.config.blindLevels;
+    while (this.levelEndsAt && Date.now() >= this.levelEndsAt && this.levelIndex < lv.length - 1) {
+      const from = this.levelEndsAt;
+      this.applyLevel(this.levelIndex + 1);
+      this.levelEndsAt = this.levelIndex < lv.length - 1 ? from + lv[this.levelIndex].minutes * 60_000 : null;
+      this.logLevel();
+    }
   }
 
   act(playerId: string, type: ActionType, amount?: number): void {
@@ -296,7 +413,8 @@ export class Game {
   private dealIfPossible() {
     if (this.status !== 'en-jeu' || this.table.inProgress || this.nextTimer) return;
     if (this.table.readySeats().length < 2) return;
-    this.table.startHand();
+    this.advanceLevels();
+    this.table.startHand({ straddle: (id) => this.config.allowStraddle && this.straddlers.has(id) });
     this.actionSeq++;
   }
 
@@ -309,7 +427,16 @@ export class Game {
   private onHandEnd() {
     const h = this.table.hand!;
     this.closedHand = h.number;
+    // Réserve de temps : remplie à nouveau toutes les N mains jouées.
+    for (const s of this.table.seats) {
+      const b = s?.inHand ? this.banks.get(s.playerId) : undefined;
+      if (b && ++b.hands >= this.config.timeBankHands) {
+        b.seconds = this.config.timeBank;
+        b.hands = 0;
+      }
+    }
     for (const playerId of this.leaving) {
+      this.straddlers.delete(playerId);
       const i = this.table.seatOf(playerId);
       if (i === -1) continue;
       this.cashOut(playerId, this.table.seats[i]!.stack);
@@ -317,7 +444,9 @@ export class Game {
     }
     this.leaving.clear();
     if (this.status === 'en-jeu' && this.config.autoStart) {
-      const delay = h.winners.some((w) => w.hand) ? this.config.showdownTime * 1000 : 2000;
+      // Abattage, ou rabbit hunting à regarder : on laisse le temps prévu. Sinon, main suivante rapide.
+      const showsCards = h.winners.some((w) => w.hand) || (this.config.rabbitHunting && h.board.length < 5);
+      const delay = showsCards ? this.config.showdownTime * 1000 : 2000;
       this.clearNext();
       this.nextHandAt = Date.now() + delay;
       this.nextTimer = setTimeout(() => {
@@ -334,10 +463,12 @@ export class Game {
     const toAct = h && !h.ended ? h.toAct : null;
     const key = toAct === null ? '' : `${h!.number}-${this.actionSeq}-${toAct}`;
     if (key === this.turnKey) return;
+    this.settleBank();
     this.turnKey = key;
     if (this.turnTimer) clearTimeout(this.turnTimer);
     this.turnTimer = null;
     this.turnDeadline = null;
+    this.turnDuration = 0;
     if (toAct === null) return;
     const s = this.table.seats[toAct]!;
     if (s.sittingOut) {
@@ -345,16 +476,35 @@ export class Game {
       setTimeout(() => this.timeout(key, toAct), 600);
       return;
     }
-    if (this.config.decisionTime > 0) {
-      this.turnDeadline = Date.now() + this.config.decisionTime * 1000;
-      this.turnTimer = setTimeout(() => this.timeout(key, toAct), this.config.decisionTime * 1000);
-    }
+    if (this.config.decisionTime > 0) this.startCountdown(key, toAct, this.config.decisionTime * 1000);
+  }
+
+  private startCountdown(key: string, seat: number, ms: number) {
+    this.turnDuration = ms;
+    this.turnDeadline = Date.now() + ms;
+    this.turnTimer = setTimeout(() => this.timeout(key, seat), ms);
+  }
+
+  /** Retire de la réserve le temps qu'un joueur y a pris pendant son tour. */
+  private settleBank() {
+    if (!this.bankUse) return;
+    const b = this.banks.get(this.bankUse.playerId);
+    if (b) b.seconds = Math.max(0, b.seconds - Math.ceil((Date.now() - this.bankUse.since) / 1000));
+    this.bankUse = null;
   }
 
   private timeout(key: string, seat: number) {
     if (key !== this.turnKey) return;
     const s = this.table.seats[seat];
     if (!s) return;
+    // Temps normal écoulé : on entame la réserve avant de jouer à sa place.
+    const bank = this.banks.get(s.playerId);
+    if (!s.sittingOut && !this.bankUse && bank && bank.seconds > 0) {
+      this.bankUse = { playerId: s.playerId, since: Date.now() };
+      this.startCountdown(key, seat, bank.seconds * 1000);
+      this.changed();
+      return;
+    }
     if (!s.sittingOut) {
       s.sittingOut = true;
       this.addLog(`${s.name} n'a pas joué à temps et passe absent`);
@@ -395,7 +545,9 @@ export class Game {
     switch (e.type) {
       case 'handStart': return `— Main n°${e.hand} · bouton : ${n(e.dealer)} —`;
       case 'blind':
-        return e.kind === 'ante' ? null : `${n(e.seat)} paie la ${e.kind} blinde (${e.amount})`;
+        if (e.kind === 'ante') return null;
+        if (e.kind === 'straddle') return `${n(e.seat)} straddle (${e.amount})`;
+        return `${n(e.seat)} paie la ${e.kind} blinde (${e.amount})`;
       case 'action':
         switch (e.action) {
           case 'fold': return `${n(e.seat)} se couche`;
@@ -431,7 +583,8 @@ export class Game {
 
     const seats = t.seats.map((s, i): PublicSeat | null => {
       if (!s) return null;
-      const visible = s.playerId === playerId || s.shown || (!!h?.runout && s.inHand && !s.folded);
+      const visible = s.playerId === playerId || s.shown
+        || (this.config.revealOnAllIn && !!h?.runout && s.inHand && !s.folded);
       const cards = !s.inHand || s.hole.length === 0 || (s.folded && s.playerId !== playerId)
         ? []
         : s.hole.map((c) => (visible ? c : null));
@@ -455,6 +608,8 @@ export class Game {
         cards,
         handName,
         won: won.get(i) ?? 0,
+        timeBank: this.banks.get(s.playerId)?.seconds ?? 0,
+        straddle: h?.straddleSeat === i && !h.ended,
       };
     });
 
@@ -481,6 +636,7 @@ export class Game {
         isOwner: this.isOwner(playerId),
         seat: mySeat === -1 ? null : mySeat,
         pendingRequest: this.requests.find((r) => r.playerId === playerId) ?? null,
+        wantsStraddle: this.config.allowStraddle && this.straddlers.has(playerId),
       },
       config: this.config,
       status: this.status,
@@ -499,10 +655,22 @@ export class Game {
         ended: h.ended,
         runout: h.runout,
         winningCards: h.ended ? h.winners.flatMap((w) => w.cards) : [],
+        straddleSeat: h.straddleSeat,
+        rabbit: h.ended && this.config.rabbitHunting ? t.rabbitCards() : [],
       },
       legal: mySeat === -1 ? null : t.legalActions(mySeat),
       myHandName,
       turnDeadline: this.turnDeadline,
+      turnDuration: this.turnDuration,
+      inTimeBank: !!this.bankUse,
+      level: this.config.blindLevels.length
+        ? {
+            index: this.levelIndex,
+            total: this.config.blindLevels.length,
+            endsAt: this.levelEndsAt,
+            next: this.config.blindLevels[this.levelIndex + 1] ?? null,
+          }
+        : null,
       nextHandAt: this.nextHandAt,
       requests: this.isOwner(playerId) ? this.requests : [],
       pendingSeats: this.requests.filter((r) => r.kind === 'place').map((r) => r.seat),

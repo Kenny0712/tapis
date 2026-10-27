@@ -55,6 +55,10 @@ export function Table({ state, now, onSit }: {
               h?.board[i] ? (
                 <CardView key={h.number + '-' + i} card={h.board[i]} size="md"
                   highlight={h.ended && winning.has(h.board[i])} dim={h.ended && winning.size > 0 && !winning.has(h.board[i])} />
+              ) : h?.rabbit[i - h.board.length] ? (
+                <div key={'r' + h.number + '-' + i} className="rabbit" title="Rabbit hunting : carte qui serait sortie">
+                  <CardView card={h.rabbit[i - h.board.length]} size="md" />
+                </div>
               ) : (
                 <div key={i} className="card slot md" aria-hidden="true" />
               ),
@@ -101,15 +105,16 @@ function SeatView({ seat, index, state, isYou, now, winning }: {
   const h = state.hand;
   const acting = h && !h.ended && h.toAct === index;
   const deadline = acting && state.turnDeadline ? state.turnDeadline : null;
-  const total = state.config.decisionTime * 1000;
+  const total = state.turnDuration;
   const left = deadline ? Math.max(0, deadline - now) : 0;
   const status = seat.won > 0 ? `+${fmt(seat.won)}`
     : seat.leaving ? 'Part'
     : seat.away ? 'Absent'
     : !seat.connected ? 'Déconnecté'
+    : acting && state.inTimeBank ? `Réserve ${Math.ceil(left / 1000)} s`
     : seat.allIn ? 'Tapis'
     : seat.folded ? 'Couché'
-    : seat.lastAction;
+    : seat.lastAction ?? (seat.straddle ? 'Straddle' : null);
 
   return (
     <div className={['seat', isYou && 'you', acting && 'acting', seat.folded && 'folded', seat.won > 0 && 'winner', (seat.away || !seat.connected) && 'idle']
@@ -127,17 +132,17 @@ function SeatView({ seat, index, state, isYou, now, winning }: {
         <div className="stack">{fmt(seat.stack)}</div>
         {status && <div className={'tag' + (seat.won > 0 ? ' win' : '')}>{status}</div>}
         {seat.handName && !isYou && <div className="handname">{seat.handName}</div>}
-        {deadline && total > 0 && <TurnTimer key={deadline} left={left} total={total} />}
+        {deadline && total > 0 && <TurnTimer key={deadline} left={left} total={total} bank={state.inTimeBank} />}
       </div>
     </div>
   );
 }
 
 /** Barre de temps : figée au montage puis animée en CSS, pour ne pas sauter à chaque rendu. */
-function TurnTimer({ left, total }: { left: number; total: number }) {
+function TurnTimer({ left, total, bank }: { left: number; total: number; bank: boolean }) {
   const [start] = useState({ left, total });
   return (
-    <div className="timer" aria-hidden="true">
+    <div className={'timer' + (bank ? ' bank' : '')} aria-hidden="true">
       <i style={{ animationDuration: `${start.left}ms`, width: `${(start.left / start.total) * 100}%` }} />
     </div>
   );

@@ -147,6 +147,8 @@ io.on('connection', (socket: Sock) => {
   });
   on('setStack', (g, me, p) => g.setStack(me, p.playerId, Number(p.stack)));
   on('updateConfig', (g, me, p) => g.updateConfig(me, p));
+  on('nextLevel', (g, me) => g.nextLevel(me));
+  on('setStraddle', (g, me, p) => g.setStraddle(me, !!p.on));
 
   socket.on('disconnect', () => {
     const { gameId, playerId } = socket.data;

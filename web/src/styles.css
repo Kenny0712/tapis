@@ -145,11 +145,19 @@ input:focus { border-color: var(--accent); outline: none; }
   font-weight: 600; text-align: left;
 }
 
-.stage { position: relative; flex: 1; min-height: 0; }
-.table-wrap { position: absolute; inset: 6px 4px; margin: auto; max-width: 1180px; max-height: 760px; }
+/* La table garde ses proportions : longue (2:1) à l'horizontale, debout sur un téléphone. */
+.stage { position: relative; flex: 1; min-height: 0; container-type: size; display: grid; place-items: center; }
+.table-wrap {
+  position: relative;
+  width: min(calc(100cqw - 8px), calc((100cqh - 12px) * 2), 1280px);
+  aspect-ratio: 2 / 1;
+}
+@container (max-aspect-ratio: 6 / 5) {
+  .table-wrap { width: calc(100cqw - 8px); height: calc(100cqh - 12px); aspect-ratio: auto; }
+}
 
 .felt {
-  position: absolute; inset: 13% 11%;
+  position: absolute; inset: 15% 9%;
   border-radius: 999px;
   background: radial-gradient(ellipse at 50% 38%, var(--felt-1), var(--felt-2) 58%, var(--felt-3));
   box-shadow:
@@ -158,7 +166,7 @@ input:focus { border-color: var(--accent); outline: none; }
     0 24px 60px rgba(0, 0, 0, 0.55),
     inset 0 2px 30px rgba(0, 0, 0, 0.45);
 }
-@media (orientation: portrait) {
+@container (max-aspect-ratio: 6 / 5) {
   .felt { inset: 11% 15%; }
 }
 .felt-inner {
@@ -236,6 +244,7 @@ input:focus { border-color: var(--accent); outline: none; }
 .seat.you .plate { background: rgba(26, 36, 32, 0.97); }
 .timer { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, 0.08); }
 .timer i { display: block; height: 100%; background: var(--accent); animation: shrink linear forwards, warn linear forwards; }
+.timer.bank i { animation-name: shrink; background: var(--danger); }
 @keyframes shrink { to { width: 0; } }
 @keyframes warn { 0%, 70% { background: var(--accent); } 100% { background: var(--danger); } }
 
@@ -345,6 +354,45 @@ input:focus { border-color: var(--accent); outline: none; }
 .request .amount { width: 90px !important; min-height: 40px; }
 .request .btn { min-height: 40px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+
+/* Réglages du propriétaire */
+.settings { display: grid; gap: 12px; }
+.settings h3 { margin-top: 10px; padding-top: 14px; border-top: 1px solid var(--border); }
+.settings h3:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.setting > div:first-child { min-width: 0; }
+.setting-label { font-weight: 600; font-size: 14px; }
+.setting .hint { font-size: 12px; }
+.setting .amount { width: 88px !important; min-height: 40px; }
+.setting select {
+  min-height: 40px; min-width: 88px; padding: 0 10px; border-radius: 10px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 16px;
+}
+.seg { display: inline-flex; flex: none; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 2px; }
+.seg button { min-height: 34px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-weight: 600; font-size: 13px; }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+.seg.wide { display: flex; }
+.seg.wide button { flex: 1; }
+.levels { width: 100%; border-collapse: collapse; font-size: 13px; }
+.levels th { color: var(--muted); font-weight: 600; text-align: left; padding: 0 3px 4px; }
+.levels td { padding: 2px 3px; }
+.levels td:first-child { color: var(--muted); width: 28px; }
+.levels input { min-height: 36px !important; padding: 0 6px !important; font-size: 14px !important; }
+.levels tr.current td:first-child { color: var(--accent); font-weight: 700; }
+.levels .btn.square { width: 32px; min-height: 32px; }
+.save-bar {
+  position: sticky; bottom: calc(-1 * max(14px, env(safe-area-inset-bottom)));
+  margin: 4px -14px 0; padding: 10px 14px max(14px, env(safe-area-inset-bottom));
+  background: var(--surface); border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+}
+.settings-btn { gap: 6px; padding: 0 10px; color: var(--accent); }
+@media (max-width: 600px) { .settings-btn span { display: none; } .settings-btn { width: 44px; padding: 0; } }
+
+/* Rabbit hunting : cartes qui seraient sorties, en retrait */
+.rabbit { opacity: 0.45; filter: grayscale(0.4); position: relative; }
+.rabbit::after { content: ''; position: absolute; inset: 0; border-radius: 6px; outline: 1px dashed rgba(255, 255, 255, 0.5); outline-offset: 2px; }
 
 /* ---------- Fenêtres ---------- */
 

@@ -11,7 +11,8 @@ const paths = {
   sound: 'M11 5L6 9H3v6h3l5 4zM16 9a4 4 0 010 6M19 6a8 8 0 010 12',
   mute: 'M11 5L6 9H3v6h3l5 4zM22 9l-6 6M16 9l6 6',
   away: 'M12 7v5l3 2M12 22a10 10 0 110-20 10 10 0 010 20z',
-  exit: 'M15 4h4a1 1 0 011 1v14a1 1 0 01-1 1h-4M10 17l5-5-5-5M15 12H3',
+  sliders: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
+  exit:'M15 4h4a1 1 0 011 1v14a1 1 0 01-1 1h-4M10 17l5-5-5-5M15 12H3',
 } as const;
 
 export type IconName = keyof typeof paths;
