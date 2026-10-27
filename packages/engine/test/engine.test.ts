@@ -20,9 +20,9 @@ test('classement des mains', () => {
   for (let i = 1; i < order.length; i++) {
     assert.ok(compareScores(order[i].score, order[i - 1].score) > 0, `${order[i].name} > ${order[i - 1].name}`);
   }
-  assert.equal(order[4].name, 'Quinte au cinq');
+  assert.equal(order[4].name, 'Quinte hauteur 5');
   assert.equal(order[9].name, 'Quinte flush royale');
-  assert.equal(order[7].name, 'Full aux as par les neuf');
+  assert.equal(order[7].name, 'Full aux A par les 9');
 });
 
 test('kicker départage, égalité exacte', () => {
@@ -191,4 +191,12 @@ test('rabbit hunting et nombre de sièges', () => {
   const rabbit = t.rabbitCards();
   assert.equal(rabbit.length, 5);
   assert.equal(new Set(rabbit).size, 5);
+});
+
+test('noms des mains en lettres anglaises', () => {
+  assert.equal(ev('Ks Kd 9h 7c 3s').name, 'Paire de K');
+  assert.equal(ev('As Ad 9h 7c 3s').name, "Paire d'A");
+  assert.equal(ev('As Ad Ah Tc Ts').name, 'Full aux A par les T');
+  assert.equal(ev('Qs Qd Jh Jc 3s').name, 'Double paire Q et J');
+  assert.equal(ev('9s Ts Js Qs Ks').name, 'Quinte flush hauteur K');
 });

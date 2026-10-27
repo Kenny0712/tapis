@@ -1,4 +1,4 @@
-import { Card, rankValue } from './cards';
+import { Card, RANKS, rankValue } from './cards';
 
 export const CATEGORY_NAMES = [
   'Hauteur',
@@ -12,17 +12,11 @@ export const CATEGORY_NAMES = [
   'Quinte flush',
 ] as const;
 
-const RANK_NAMES: Record<number, string> = {
-  2: 'deux', 3: 'trois', 4: 'quatre', 5: 'cinq', 6: 'six', 7: 'sept', 8: 'huit',
-  9: 'neuf', 10: 'dix', 11: 'valet', 12: 'dame', 13: 'roi', 14: 'as',
-};
-const RANK_PLURAL: Record<number, string> = {
-  2: 'deux', 3: 'trois', 4: 'quatre', 5: 'cinq', 6: 'six', 7: 'sept', 8: 'huit',
-  9: 'neuf', 10: 'dix', 11: 'valets', 12: 'dames', 13: 'rois', 14: 'as',
-};
+/** Rang en notation anglaise, comme sur les cartes : A K Q J T 9… */
+const L = (r: number) => RANKS[r - 2];
 
-/** « de rois », mais « d'as » (élision). */
-const of = (r: number) => (r === 14 ? "d'as" : `de ${RANK_PLURAL[r]}`);
+/** « de K », mais « d'A » (élision, on lit « d'as »). */
+const of = (r: number) => (r === 14 ? "d'A" : `de ${L(r)}`);
 
 export interface HandValue {
   /** Catégorie puis départages : on compare deux scores dans l'ordre. */
@@ -67,15 +61,15 @@ export function compareScores(a: number[], b: number[]): number {
 function describe(score: number[]): string {
   const [cat, a, b] = score;
   switch (cat) {
-    case 0: return `Hauteur ${RANK_NAMES[a]}`;
+    case 0: return `Hauteur ${L(a)}`;
     case 1: return `Paire ${of(a)}`;
-    case 2: return `Double paire ${RANK_PLURAL[a]} et ${RANK_PLURAL[b]}`;
+    case 2: return `Double paire ${L(a)} et ${L(b)}`;
     case 3: return `Brelan ${of(a)}`;
-    case 4: return `Quinte au ${RANK_NAMES[a]}`;
-    case 5: return `Couleur hauteur ${RANK_NAMES[a]}`;
-    case 6: return `Full aux ${RANK_PLURAL[a]} par les ${RANK_PLURAL[b]}`;
+    case 4: return `Quinte hauteur ${L(a)}`;
+    case 5: return `Couleur hauteur ${L(a)}`;
+    case 6: return `Full aux ${L(a)} par les ${L(b)}`;
     case 7: return `Carré ${of(a)}`;
-    case 8: return a === 14 ? 'Quinte flush royale' : `Quinte flush au ${RANK_NAMES[a]}`;
+    case 8: return a === 14 ? 'Quinte flush royale' : `Quinte flush hauteur ${L(a)}`;
   }
   return CATEGORY_NAMES[cat];
 }
@@ -112,7 +106,7 @@ export function describePartial(cards: Card[]): string {
   if (groups[0][1] === 4) return `Carré ${of(groups[0][0])}`;
   if (groups[0][1] === 3) return `Brelan ${of(groups[0][0])}`;
   if (groups[0][1] === 2 && groups[1]?.[1] === 2)
-    return `Double paire ${RANK_PLURAL[groups[0][0]]} et ${RANK_PLURAL[groups[1][0]]}`;
+    return `Double paire ${L(groups[0][0])} et ${L(groups[1][0])}`;
   if (groups[0][1] === 2) return `Paire ${of(groups[0][0])}`;
-  return `Hauteur ${RANK_NAMES[groups[0][0]]}`;
+  return `Hauteur ${L(groups[0][0])}`;
 }
